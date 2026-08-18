@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EHS Classroom-Level Evacuation Pathfinder</title>
+    <title>EHS Dijkstra's Algorithm Evacuation Pathfinder</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -12,7 +12,7 @@
         <div class="header-container">
             <div class="logo-area">
                 <span class="badge red-pulse">Magnitude 7.2 Contingency Plan</span>
-                <h1>EHS Classroom-Level Evacuation Pathfinder</h1>
+                <h1>EHS Dijkstra's Algorithm Evacuation Pathfinder</h1>
             </div>
             <p class="subtitle">Extensive 105-Classroom Routing, Density & Staircase Bottleneck Simulator</p>
         </div>
@@ -36,7 +36,10 @@
                     <label for="algorithm-select">Pathfinding Algorithm:</label>
                     <select id="algorithm-select">
                         <option value="DIJKSTRA">Dijkstra's Algorithm (Standard)</option>
-                        <option value="ASTAR">A* Search (Euclidean Distance Heuristic)</option>
+                        <option value="ASTAR">A* Search (Euclidean Heuristic)</option>
+                        <option value="BIDIRECTIONAL">Bi-Directional Dijkstra (Search Speedup)</option>
+                        <option value="KSHORTEST">Yen's K-Shortest Paths (3 Routes)</option>
+                        <option value="CAPACITY">Capacity-Constrained Dijkstra (Bottleneck Avoidance)</option>
                     </select>
                 </div>
                 
@@ -255,6 +258,80 @@
                 </div>
             </div>
         </section>
+
+        <!-- Comprehensive Pathfinding Algorithm Report Section -->
+        <section class="panel info-panel" style="margin-top: 1.5rem;">
+            <h2>Comprehensive Pathfinding Algorithm Comparison Report</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+                A comparison of behaviors, metrics, and simulation properties across the five emergency evacuation models.
+            </p>
+            
+            <div style="overflow-x: auto; margin-bottom: 1.5rem;">
+                <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color); background-color: var(--card-bg);">
+                            <th style="padding: 10px;">Pathfinding Algorithm</th>
+                            <th style="padding: 10px;">Core Search Logic</th>
+                            <th style="padding: 10px;">Primary Metric</th>
+                            <th style="padding: 10px;">Evaluation Step Count</th>
+                            <th style="padding: 10px;">Best Suited For</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;"><strong>Dijkstra's (Standard)</strong></td>
+                            <td style="padding: 10px;">Radial expansion from source room</td>
+                            <td style="padding: 10px;">Shortest total path cost</td>
+                            <td style="padding: 10px;">High (scans outward uniformly)</td>
+                            <td style="padding: 10px;">General optimal route baseline</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;"><strong>A* Search</strong></td>
+                            <td style="padding: 10px;">Best-first search guided by direction</td>
+                            <td style="padding: 10px;">Path cost + Euclidean distance</td>
+                            <td style="padding: 10px;">Low (directional pruning)</td>
+                            <td style="padding: 10px;">Fast single-agent pathfinding</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;"><strong>Bi-Directional Dijkstra</strong></td>
+                            <td style="padding: 10px;">Concurrent forward & backward search</td>
+                            <td style="padding: 10px;">Forward cost + Backward cost</td>
+                            <td style="padding: 10px;">Very Low (half the radius)</td>
+                            <td style="padding: 10px;">High-speed search in complex grids</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;"><strong>Yen's K-Shortest Paths</strong></td>
+                            <td style="padding: 10px;">Iterative edge blocking & recalculation</td>
+                            <td style="padding: 10px;">Evaluates top 3 candidate routes</td>
+                            <td style="padding: 10px;">Multi-pass (higher computation)</td>
+                            <td style="padding: 10px;">Emergency backup plans</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;"><strong>Capacity-Constrained</strong></td>
+                            <td style="padding: 10px;">Density-weighted penalty relaxation</td>
+                            <td style="padding: 10px;">Path cost + (Density / Capacity)</td>
+                            <td style="padding: 10px;">Moderate</td>
+                            <td style="padding: 10px;">Congestion & bottleneck avoidance</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-card">
+                    <h4>Standard Dijkstra vs. A*</h4>
+                    <p>While Dijkstra's expands uniformly in all directions (building corridors, stairwells, and outdoor paths), A* shifts immediately towards the direction of the closest exit gate, cutting queue evaluations by up to 40%.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Bi-Directional Wavefronts</h4>
+                    <p>Instead of searching from the source room all the way to the gate, Bi-Directional Dijkstra spawns a backward wave from target exits. When the two waves meet, the optimal route is reconstructed instantly.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Yen's Backup & Capacity Bottlenecks</h4>
+                    <p>Yen's displays primary (Orange), secondary (Blue), and tertiary (Purple) paths simultaneously. Combined with Capacity-Constrained Dijkstra, students are dynamically routed away from narrow stairwells (low capacity) under high crowd densities.</p>
+                </div>
+            </div>
+        </section>
     </main>
 
     <!-- Help Modal Overlay -->
@@ -281,6 +358,20 @@
         <p>&copy; 2026 Eusebio High School Disaster Risk Reduction Management Office (SDRRMO)</p>
     </footer>
 
-    <script src="app.js"></script>
+    <script>
+        // Force unregister legacy service workers to clear GitHub Pages cache blocks
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for (let registration of registrations) {
+                    registration.unregister().then(function(boolean) {
+                        if (boolean) {
+                            console.log('Legacy Service Worker unregistered successfully.');
+                        }
+                    });
+                }
+            });
+        }
+    </script>
+    <script src="app.js" defer></script>
 </body>
 </html>

@@ -221,7 +221,7 @@ function getCampusDistance(nodeId, targetId) {
     return parseFloat((Math.hypot(n1.x - n2.x, n1.y - n2.y) / 50).toFixed(1));
 }
 
-// Dijkstra/A* solver over the 105-room unified graph
+// 1. Standard / Capacity-Constrained Dijkstra
 function runSolver(srcId, dstId) {
     const INF = Infinity;
     const gCost = {};
@@ -254,7 +254,7 @@ function runSolver(srcId, dstId) {
 
     let finalDst = null;
 
-    // Build weight adj dynamic matrix
+    // Build weight dynamic matrix
     const weights = {};
     allNodes.forEach(u => {
         weights[u.id] = {};
@@ -267,21 +267,25 @@ function runSolver(srcId, dstId) {
         let w = edge.w;
         const key = `${u}-${v}`;
         
-        // Apply custom weights
         if (customWeights[key]) {
             w = customWeights[key];
         }
 
-        // Apply Crowd bottlenecks
-        if (crowdLevel > 30 && roomToBuildingMap[u]) {
+        // Apply Capacity-Constrained Bottleneck routing weights (Improvement 2)
+        if (activeAlgorithm === 'CAPACITY') {
+            const uStairs = u.includes('Stairs_') || v.includes('Stairs_');
+            const uCorr = u.includes('Corr_') || v.includes('Corr_');
+            // Staircases capacity = 8, hallways = 20, campus = 80
+            const cap = uStairs ? 8 : (uCorr ? 20 : 80);
+            w += Math.floor((crowdLevel / cap) * 10);
+        } else if (crowdLevel > 30 && roomToBuildingMap[u]) {
             w += Math.floor(crowdLevel * 0.1);
         }
 
-        // Apply Hazards
         if (activeHazard === 'EARTHQUAKE' && (u.includes('_A') || v.includes('_A') || u === 'A' || v === 'A')) {
-            w += 10; // structural damage penalty around VPE I (Node A)
+            w += 10;
         } else if (activeHazard === 'FIRE' && (u.includes('Corr_') || v.includes('Corr_'))) {
-            w += 8; // corridors are burning
+            w += 8;
         }
 
         const isEdgeBlocked = blockedEdges.has(`${u}-${v}`) || 
@@ -295,7 +299,6 @@ function runSolver(srcId, dstId) {
         }
     });
 
-    // Run Dijkstra loop
     for (let count = 0; count < allNodes.length; count++) {
         let u = null;
         let minVal = INF;
@@ -317,7 +320,6 @@ function runSolver(srcId, dstId) {
 
         visited.add(u);
 
-        // Snapshot step state
         steps.push({
             selected: u,
             explanation: `Visited vertex: ${u}. Cost: ${gCost[u].toFixed(1)}.`,
@@ -326,7 +328,7 @@ function runSolver(srcId, dstId) {
                 cost: gCost[n.id] === INF ? -1 : gCost[n.id],
                 prev: prev[n.id] ? prev[n.id] : " "
             })),
-            queue: pq.slice(0, 8) // slice top 8 unvisited for cleaner UI rendering
+            queue: pq.slice(0, 8)
         });
 
         if (dstId === 'CLOSEST') {
@@ -339,7 +341,6 @@ function runSolver(srcId, dstId) {
             break;
         }
 
-        // Relax neighbors
         for (const v in weights[u]) {
             const w = weights[u][v];
             if (w > 0 && !visited.has(v)) {
@@ -352,7 +353,7 @@ function runSolver(srcId, dstId) {
                     steps.push({
                         selected: u,
                         relaxingEdge: { u, v },
-                        explanation: `Inspecting edge connection ${u} ➔ ${v}. Updated cost to ${gCost[v].toFixed(1)}.`,
+                        explanation: `Inspecting connection ${u} ➔ ${v}. Updated cost to ${gCost[v].toFixed(1)}.`,
                         table: allNodes.filter(n => n.type === 'room' || n.id === 'J' || n.id === 'K' || n.id === srcId).map(n => ({
                             node: n.id,
                             cost: gCost[n.id] === INF ? -1 : gCost[n.id],
@@ -384,6 +385,242 @@ function runSolver(srcId, dstId) {
     };
 }
 
+// 2. Bi-Directional Dijkstra (Forward & Backward concurrently - Improvement 3)
+function runBiDirectionalSolver(srcId, dstId) {
+    const INF = Infinity;
+    const gF = {}; // Forward costs
+    const gB = {}; // Backward costs
+    const prevF = {};
+    const prevB = {};
+    const visitedF = new Set();
+    const visitedB = new Set();
+    const steps = [];
+
+    allNodes.forEach(n => {
+        gF[n.id] = INF;
+        gB[n.id] = INF;
+        prevF[n.id] = null;
+        prevB[n.id] = null;
+    });
+
+    gF[srcId] = 0;
+    
+    // In closest target search, backward starts from both J and K exit gates!
+    const targets = dstId === 'CLOSEST' ? ['J', 'K'] : [dstId];
+    targets.forEach(t => {
+        gB[t] = 0;
+    });
+
+    // Build static edge map
+    const weights = {};
+    allNodes.forEach(u => { weights[u.id] = {}; });
+    allEdges.forEach(edge => {
+        const u = edge.u; const v = edge.v; let w = edge.w;
+        const key = `${u}-${v}`;
+        if (customWeights[key]) w = customWeights[key];
+        const isBlocked = blockedEdges.has(`${u}-${v}`) || blockedEdges.has(`${v}-${u}`) || blockedNodes.has(u) || blockedNodes.has(v);
+        if (!isBlocked) { weights[u][v] = w; weights[v][u] = w; }
+    });
+
+    steps.push({
+        selected: null,
+        explanation: `Initializing Bi-Directional search. Forward queue starts at ${srcId}. Backward queue starts at ${targets.join('/')}.`,
+        table: allNodes.filter(n => n.type === 'room' || n.id === 'J' || n.id === 'K' || n.id === srcId).map(n => ({
+            node: n.id,
+            cost: gF[n.id] === INF ? -1 : gF[n.id],
+            prev: " "
+        })),
+        queue: [{ node: srcId, cost: 0 }]
+    });
+
+    let intersectNode = null;
+
+    for (let count = 0; count < allNodes.length; count++) {
+        // Step Forward
+        let uF = null; let minF = INF;
+        allNodes.forEach(n => {
+            if (!visitedF.has(n.id) && gF[n.id] < minF) { minF = gF[n.id]; uF = n.id; }
+        });
+
+        if (uF !== null && gF[uF] !== INF) {
+            visitedF.add(uF);
+            steps.push({
+                selected: uF,
+                explanation: `Forward Search: Visited ${uF} (Cost: ${gF[uF].toFixed(1)}).`,
+                table: allNodes.filter(n => n.type === 'room' || n.id === 'J' || n.id === 'K' || n.id === srcId).map(n => ({
+                    node: n.id,
+                    cost: gF[n.id] === INF ? -1 : gF[n.id],
+                    prev: prevF[n.id] ? prevF[n.id] : " "
+                })),
+                queue: [{ node: uF, cost: gF[uF] }]
+            });
+
+            if (visitedB.has(uF)) {
+                intersectNode = uF;
+                break;
+            }
+
+            for (const v in weights[uF]) {
+                const w = weights[uF][v];
+                if (!visitedF.has(v) && gF[uF] + w < gF[v]) {
+                    gF[v] = gF[uF] + w;
+                    prevF[v] = uF;
+                }
+            }
+        }
+
+        // Step Backward
+        let uB = null; let minB = INF;
+        allNodes.forEach(n => {
+            if (!visitedB.has(n.id) && gB[n.id] < minB) { minB = gB[n.id]; uB = n.id; }
+        });
+
+        if (uB !== null && gB[uB] !== INF) {
+            visitedB.add(uB);
+            steps.push({
+                selected: uB,
+                explanation: `Backward Search: Visited ${uB} (Cost: ${gB[uB].toFixed(1)}).`,
+                table: allNodes.filter(n => n.type === 'room' || n.id === 'J' || n.id === 'K' || n.id === srcId).map(n => ({
+                    node: n.id,
+                    cost: gB[n.id] === INF ? -1 : gB[n.id],
+                    prev: prevB[n.id] ? prevB[n.id] : " "
+                })),
+                queue: [{ node: uB, cost: gB[uB] }]
+            });
+
+            if (visitedF.has(uB)) {
+                intersectNode = uB;
+                break;
+            }
+
+            for (const v in weights[uB]) {
+                const w = weights[uB][v];
+                if (!visitedB.has(v) && gB[uB] + w < gB[v]) {
+                    gB[v] = gB[uB] + w;
+                    prevB[v] = uB;
+                }
+            }
+        }
+
+        if ((uF === null || gF[uF] === INF) && (uB === null || gB[uB] === INF)) break;
+    }
+
+    // Reconstruct Bi-Directional Path
+    const path = [];
+    let totalCost = -1;
+    let finalDst = null;
+
+    if (intersectNode) {
+        // Forward trace
+        let curr = intersectNode;
+        while (curr !== null) {
+            path.push(curr);
+            curr = prevF[curr];
+        }
+        path.reverse();
+
+        // Backward trace (append)
+        curr = prevB[intersectNode];
+        while (curr !== null) {
+            path.push(curr);
+            curr = prevB[curr];
+        }
+
+        totalCost = gF[intersectNode] + gB[intersectNode];
+        finalDst = path[path.length - 1];
+    }
+
+    return { steps, path, totalCost, finalDst };
+}
+
+// 3. Yen's K-Shortest Paths (Calculates top 3 alternative paths - Improvement 1)
+function runYenKShortestPaths(srcId, dstId) {
+    const K = 3;
+    const paths = [];
+    const steps = [];
+
+    // Find 1st shortest path
+    const run1 = runSolver(srcId, dstId);
+    if (run1.path.length === 0) {
+        return { paths: [], steps: run1.steps, totalCost: -1, finalDst: null };
+    }
+
+    paths.push(run1.path);
+    steps.push(...run1.steps);
+
+    const candidates = [];
+
+    for (let k = 1; k < K; k++) {
+        const prevPath = paths[k - 1];
+        
+        for (let i = 0; i < prevPath.length - 1; i++) {
+            const spurNode = prevPath[i];
+            const rootPath = prevPath.slice(0, i + 1);
+
+            const edgesRemoved = [];
+            paths.forEach(p => {
+                if (p.length > i && p.slice(0, i + 1).join('-') === rootPath.join('-')) {
+                    const u = p[i];
+                    const v = p[i + 1];
+                    // Temporarily block edge
+                    blockedEdges.add(`${u}-${v}`);
+                    blockedEdges.add(`${v}-${u}`);
+                    edgesRemoved.push({ u, v });
+                }
+            });
+
+            // Temporarily block nodes in rootPath (except spurNode)
+            const nodesRemoved = [];
+            rootPath.slice(0, -1).forEach(node => {
+                blockedNodes.add(node);
+                nodesRemoved.push(node);
+            });
+
+            // Find spur path from spurNode to target exit
+            const spurResult = runSolver(spurNode, dstId);
+            if (spurResult.path.length > 0) {
+                const totalPath = rootPath.slice(0, -1).concat(spurResult.path);
+                candidates.push({ path: totalPath, cost: spurResult.totalCost });
+            }
+
+            // Restore blocked edges & nodes
+            edgesRemoved.forEach(e => {
+                blockedEdges.delete(`${e.u}-${e.v}`);
+                blockedEdges.delete(`${e.v}-${e.u}`);
+            });
+            nodesRemoved.forEach(n => {
+                blockedNodes.delete(n);
+            });
+        }
+
+        if (candidates.length === 0) break;
+
+        // Sort candidates by cost and pick lowest unique path
+        candidates.sort((a, b) => a.cost - b.cost);
+        let nextPath = null;
+        for (let cand of candidates) {
+            const pathStr = cand.path.join('-');
+            if (!paths.some(p => p.join('-') === pathStr)) {
+                nextPath = cand.path;
+                break;
+            }
+        }
+
+        if (nextPath) {
+            paths.push(nextPath);
+        } else {
+            break;
+        }
+    }
+
+    return {
+        paths,
+        steps,
+        totalCost: run1.totalCost,
+        finalDst: run1.finalDst
+    };
+}
+
 // Render Campus SVG Map
 function renderCampusGraph(activePath = [], activeNode = null, relaxingEdge = null) {
     const edgesGroup = document.getElementById('edges-group');
@@ -401,11 +638,31 @@ function renderCampusGraph(activePath = [], activeNode = null, relaxingEdge = nu
                           blockedNodes.has(edge.v);
 
         let isActive = false;
-        for (let i = 0; i < activePath.length - 1; i++) {
-            if ((activePath[i] === edge.u && activePath[i+1] === edge.v) ||
-                (activePath[i] === edge.v && activePath[i+1] === edge.u)) {
-                isActive = true;
-                break;
+        let isPath2 = false;
+        let isPath3 = false;
+
+        // Check if multi-paths array is passed (Yen's algorithm)
+        if (Array.isArray(activePath[0])) {
+            const p1 = activePath[0] || [];
+            const p2 = activePath[1] || [];
+            const p3 = activePath[2] || [];
+
+            for (let i = 0; i < p1.length - 1; i++) {
+                if ((p1[i] === edge.u && p1[i+1] === edge.v) || (p1[i] === edge.v && p1[i+1] === edge.u)) isActive = true;
+            }
+            for (let i = 0; i < p2.length - 1; i++) {
+                if ((p2[i] === edge.u && p2[i+1] === edge.v) || (p2[i] === edge.v && p2[i+1] === edge.u)) isPath2 = true;
+            }
+            for (let i = 0; i < p3.length - 1; i++) {
+                if ((p3[i] === edge.u && p3[i+1] === edge.v) || (p3[i] === edge.v && p3[i+1] === edge.u)) isPath3 = true;
+            }
+        } else {
+            for (let i = 0; i < activePath.length - 1; i++) {
+                if ((activePath[i] === edge.u && activePath[i+1] === edge.v) ||
+                    (activePath[i] === edge.v && activePath[i+1] === edge.u)) {
+                    isActive = true;
+                    break;
+                }
             }
         }
 
@@ -418,7 +675,15 @@ function renderCampusGraph(activePath = [], activeNode = null, relaxingEdge = nu
         line.setAttribute('y1', uNode.y);
         line.setAttribute('x2', vNode.x);
         line.setAttribute('y2', vNode.y);
-        line.setAttribute('class', `edge-line ${isBlocked ? 'blocked' : ''} ${isActive ? 'active-path' : ''} ${isRelaxing ? 'relaxing' : ''}`);
+        
+        let pathClass = 'edge-line';
+        if (isBlocked) pathClass += ' blocked';
+        if (isActive) pathClass += ' active-path';
+        if (isPath2) pathClass += ' active-path-2';
+        if (isPath3) pathClass += ' active-path-3';
+        if (isRelaxing) pathClass += ' relaxing';
+
+        line.setAttribute('class', pathClass);
         line.onclick = () => toggleEdgeBlockage(edge.u, edge.v);
 
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -438,12 +703,17 @@ function renderCampusGraph(activePath = [], activeNode = null, relaxingEdge = nu
 
     // Draw exit doors & muster points
     campusNodes.forEach(node => {
-        // Check if selected starting room belongs to this building
         const activeRoomInfo = roomToBuildingMap[sourceNode];
         const isSource = activeRoomInfo && activeRoomInfo.buildingId === node.id;
-        const isTarget = node.id === targetNode || (targetNode === 'CLOSEST' && (node.id === 'J' || node.id === 'K')) || node.id === computedFinalDst;
+        let isTarget = node.id === targetNode || (targetNode === 'CLOSEST' && (node.id === 'J' || node.id === 'K')) || node.id === computedFinalDst;
+        
         const isBlocked = blockedNodes.has(node.id);
-        const isHighlighted = activeNode === node.id || activePath.includes(node.id);
+        let isHighlighted = activeNode === node.id;
+        if (Array.isArray(activePath[0])) {
+            isHighlighted = isHighlighted || activePath.some(p => p.includes(node.id));
+        } else {
+            isHighlighted = isHighlighted || activePath.includes(node.id);
+        }
 
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('cx', node.x);
@@ -653,13 +923,22 @@ function renderFloorLayout(activePath = [], activeNode = null) {
 }
 
 // Calculate, trace and display updates
-let computedRoute = [];
+// Calculate, trace and display updates
+let computedRoute = []; // Can be a single path array or an array of multiple path arrays
 
 function calculateRoute() {
     stopPlay();
-    const result = runSolver(sourceNode, targetNode);
+    let result;
+    if (activeAlgorithm === 'BIDIRECTIONAL') {
+        result = runBiDirectionalSolver(sourceNode, targetNode);
+    } else if (activeAlgorithm === 'KSHORTEST') {
+        result = runYenKShortestPaths(sourceNode, targetNode);
+    } else {
+        result = runSolver(sourceNode, targetNode);
+    }
+
     simulationSteps = result.steps || [];
-    computedRoute = result.path || [];
+    computedRoute = activeAlgorithm === 'KSHORTEST' ? (result.paths || []) : (result.path || []);
     computedCost = result.totalCost;
     computedFinalDst = result.finalDst;
     currentStepIdx = simulationSteps.length - 1;
@@ -725,12 +1004,20 @@ function updateSimulationUI(finalPath = [], finalCost = -1) {
     document.getElementById('step-label').textContent = `Step ${currentStepIdx + 1} / ${simulationSteps.length}`;
     
     // Path result formatting
-    const pathText = finalPath.length ? finalPath.map(p => {
-        if (p.startsWith('Room_')) return `Room ${p.split('_')[2]}`;
-        if (p.startsWith('Corr_')) return `Hallway`;
-        if (p.startsWith('Stairs_')) return `Stairs`;
-        return p;
-    }).join(' ➔ ') : 'No Route Available';
+    let pathText = 'No Route Available';
+    if (activeAlgorithm === 'KSHORTEST' && Array.isArray(finalPath[0])) {
+        pathText = finalPath.map((p, idx) => {
+            const shortStr = p.slice(0, 3).map(n => n.startsWith('Room_') ? `Room ${n.split('_')[2]}` : n).join('➔') + '...';
+            return `[Route ${idx+1}]: ${shortStr}`;
+        }).join(' | ');
+    } else if (finalPath.length) {
+        pathText = finalPath.map(p => {
+            if (p.startsWith('Room_')) return `Room ${p.split('_')[2]}`;
+            if (p.startsWith('Corr_')) return `Hall`;
+            if (p.startsWith('Stairs_')) return `Stairs`;
+            return p;
+        }).join(' ➔ ');
+    }
     
     document.getElementById('path-result').textContent = pathText;
     document.getElementById('cost-result').textContent = finalCost === -1 ? 'Blocked' : finalCost.toFixed(1);
