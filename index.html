@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EHS Classroom-Level Evacuation Pathfinder</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-container">
+            <div class="logo-area">
+                <span class="badge red-pulse">Magnitude 7.2 Contingency Plan</span>
+                <h1>EHS Classroom-Level Evacuation Pathfinder</h1>
+            </div>
+            <p class="subtitle">Extensive 105-Classroom Routing, Density & Staircase Bottleneck Simulator</p>
+        </div>
+    </header>
+
+    <main class="app-container">
+        <!-- Configuration & Controls Panel -->
+        <section class="panel controls-panel">
+            <div class="panel-header-inline">
+                <h2>1. Evacuation Setup</h2>
+                <div class="top-row-buttons">
+                    <button class="btn btn-sm btn-secondary" onclick="simulateQRCode()">📷 Simulate QR Scan (Mock Room)</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-speak">🔊 Voice Off</button>
+                    <button class="btn btn-sm btn-danger" onclick="resetSimulator()">🔄 Reset Simulator</button>
+                    <button class="btn btn-sm btn-secondary" onclick="toggleHelpModal()">Show Help Guide</button>
+                </div>
+            </div>
+            
+            <div class="control-grid-3">
+                <div class="control-group">
+                    <label for="algorithm-select">Pathfinding Algorithm:</label>
+                    <select id="algorithm-select">
+                        <option value="DIJKSTRA">Dijkstra's Algorithm (Standard)</option>
+                        <option value="ASTAR">A* Search (Euclidean Distance Heuristic)</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label for="src-select">Select Starting Room (Source Vertex):</label>
+                    <select id="src-select"></select>
+                </div>
+
+                <div class="control-group">
+                    <label for="dst-select">Select Evacuation Target:</label>
+                    <select id="dst-select">
+                        <option value="CLOSEST">👉 Closest Exit Gate (Main or Back)</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="hazard-preset">Active Hazard Preset:</label>
+                    <select id="hazard-preset">
+                        <option value="NONE">None (Clear Weather Conditions)</option>
+                        <option value="EARTHQUAKE">Earthquake (Damage risk on older structures: VPE I)</option>
+                        <option value="FIRE">Corridor Fire (Indoor corridors heavily weighted)</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="crowd-range">Crowd Size (Density Bottleneck):</label>
+                    <div class="slider-container">
+                        <input type="range" id="crowd-range" min="1" max="100" value="10">
+                        <span id="crowd-val">Low (10%)</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label for="speed-range">Simulation Speed:</label>
+                    <div class="slider-container">
+                        <input type="range" id="speed-range" min="100" max="2000" step="50" value="100">
+                        <span id="speed-val">0.1s</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scenario-buttons">
+                <button class="btn btn-secondary" onclick="presetScenario('evac-court')">Evacuate to Court</button>
+                <button class="btn btn-secondary" onclick="presetScenario('evac-ground')">Evacuate to Open Ground</button>
+                <button class="btn btn-secondary" onclick="presetScenario('blockage-main')">Simulate Main Gate Blocked</button>
+                <button class="btn btn-secondary" onclick="presetScenario('heavy-congestion')">Simulate Heavy Corridor Congestion</button>
+                <button class="btn btn-outline-danger" onclick="clearBlockages()">Clear All Blocks & Weights</button>
+            </div>
+        </section>
+
+        <!-- Main Workspace: Visualizer and Dijkstra Table -->
+        <div class="workspace-grid">
+            <!-- Left side: Interactive Map Cards -->
+            <div class="maps-column">
+                <!-- Floor Plan Map Card -->
+                <section class="card graph-card" style="margin-bottom: 1.5rem;">
+                    <div class="card-header">
+                        <h3 id="floor-card-title">Interactive Building Multi-Floor Escape Plan</h3>
+                        <div class="legend">
+                            <span class="legend-item"><span class="dot source-dot"></span>Active Room</span>
+                            <span class="legend-item"><span class="dot target-dot"></span>Stairs</span>
+                            <span class="legend-item"><span class="dot active-dot"></span>Corridor</span>
+                        </div>
+                    </div>
+                    <div class="graph-wrapper" style="min-height: 400px; padding: 0;">
+                        <!-- SVG view box adjusted to show entire stacked floors -->
+                        <svg id="floor-svg" viewBox="0 0 600 500" width="100%" height="100%">
+                            <g id="floor-edges-group"></g>
+                            <g id="floor-nodes-group"></g>
+                        </svg>
+                    </div>
+                </section>
+
+                <!-- Campus Grounds Map Card -->
+                <section class="card graph-card">
+                    <div class="card-header">
+                        <h3>Interactive Campus Outdoor Map</h3>
+                        <div class="legend">
+                            <span class="legend-item"><span class="dot source-dot"></span>Start Exit</span>
+                            <span class="legend-item"><span class="dot target-dot"></span>Exit Gate</span>
+                            <span class="legend-item"><span class="dot active-dot"></span>Muster Pt</span>
+                        </div>
+                    </div>
+                    <div class="graph-wrapper" style="min-height: 300px;">
+                        <svg id="campus-svg" viewBox="0 0 600 500" width="100%" height="100%">
+                            <g id="edges-group"></g>
+                            <g id="nodes-group"></g>
+                        </svg>
+                    </div>
+                    <div class="graph-instructions">
+                        <p>💡 <strong>Room-level Routing:</strong> Tapping a room automatically tracks the route down the staircase to the campus grounds exit and finally to the muster point.</p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Dijkstra Table Card -->
+            <section class="card table-card">
+                <div class="card-header">
+                    <h3>Solver Execution State</h3>
+                    <div class="solver-controls">
+                        <button id="btn-prev" class="btn btn-sm btn-icon" disabled>◀</button>
+                        <span id="step-label">Step 0 / 0</span>
+                        <button id="btn-next" class="btn btn-sm btn-icon" disabled>▶</button>
+                        <button id="btn-play" class="btn btn-sm btn-primary">Play</button>
+                    </div>
+                </div>
+
+                <!-- Explanation Banner -->
+                <div class="explanation-banner" id="step-explanation">
+                    Initializing solver engine. Select a starting room to begin.
+                </div>
+
+                <div class="table-wrapper">
+                    <table class="dijkstra-table">
+                        <thead>
+                            <tr>
+                                <th>Node (Room/Point)</th>
+                                <th>Tentative Cost (f = g + h)</th>
+                                <th>Previous Node</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dijkstra-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Priority Queue Visualization -->
+                <div class="queue-container">
+                    <h4 id="queue-header">Min-Priority Queue (Unvisited Nodes)</h4>
+                    <div id="queue-state" class="queue-badge-container">
+                        <!-- Badges populate here -->
+                    </div>
+                </div>
+
+                <div class="path-details">
+                    <p><strong>Computed Safe Route:</strong> <span id="path-result" class="path-highlight">-</span></p>
+                    <p><strong>Total Cumulative Cost (g):</strong> <span id="cost-result">-</span></p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Analytics and Configuration Import/Export -->
+        <div class="workspace-grid">
+            <!-- Analytics Panel -->
+            <section class="panel analytics-panel">
+                <div class="panel-header-inline">
+                    <h3>DRRM Evacuation Analytics Report</h3>
+                    <button class="btn btn-sm btn-primary" onclick="window.print()">Print Drill Report</button>
+                </div>
+                <div class="analytics-grid">
+                    <div class="analytics-stat">
+                        <div class="stat-value" id="stat-efficiency">Excellent (100%)</div>
+                        <div class="stat-label">Route Safety Rating</div>
+                    </div>
+                    <div class="analytics-stat">
+                        <div class="stat-value" id="stat-bottlenecks">0</div>
+                        <div class="stat-label">Active Bottlenecks</div>
+                    </div>
+                    <div class="analytics-stat">
+                        <div class="stat-value" id="stat-congested-edges">0</div>
+                        <div class="stat-label">Congested Path Sections</div>
+                    </div>
+                </div>
+                <div class="stat-details" id="stat-summary-text" style="font-size:0.8rem; color:var(--text-secondary); margin-top: 1rem;">
+                    Evacuation paths are clear. Estimated clearance times are nominal.
+                </div>
+            </section>
+
+            <!-- Edge Weight Editor & Import/Export -->
+            <section class="panel editor-panel">
+                <h3>Campus Config Editor (JSON Support)</h3>
+                <p class="subtitle">Select connection to customize or export config details:</p>
+                <div class="editor-row">
+                    <select id="edge-editor-select"></select>
+                    <div class="slider-container flex-grow">
+                        <input type="range" id="edge-weight-slider" min="1" max="20" value="1">
+                        <span id="edge-weight-val">1</span>
+                    </div>
+                </div>
+                <div class="scenario-buttons" style="margin-top: 1rem;">
+                    <button class="btn btn-sm btn-secondary" onclick="exportConfig()">📥 Export Campus JSON</button>
+                    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('import-file').click()">📤 Import Campus JSON</button>
+                    <input type="file" id="import-file" style="display:none;" onchange="importConfig(event)">
+                </div>
+            </section>
+        </div>
+
+        <!-- Performance Logs -->
+        <section class="panel log-panel">
+            <h3>Route Performance Log</h3>
+            <div class="log-wrapper" id="history-log">
+                <div class="empty-log">No routes saved yet. Run simulation to log.</div>
+            </div>
+        </section>
+
+        <!-- EHS Baseline Info -->
+        <section class="panel info-panel">
+            <h2>Eusebio High School Baseline Data (CY 2023)</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h4>VPE Buildings Capacity</h4>
+                    <p>EHS features VPE I to V (constructed between 1993-2004) acting as core academic rooms. Class sizes range from 13 to 35 rooms with need for minor repairs.</p>
+                </div>
+                <div class="info-card">
+                    <h4>Primary Evacuation Area</h4>
+                    <p><strong>Open Ground (Node I):</strong> Main safe muster point. Connects directly to Main Gate (Raymundo Ave) and Back Gate (F. Andres St).</p>
+                </div>
+                <div class="info-card">
+                    <h4>SDRRM Evacuation Leadership</h4>
+                    <ul>
+                        <li><strong>Principal/Head:</strong> Dr. Gilbert O. Inocencio</li>
+                        <li><strong>SDRRM Facilitator (JHS):</strong> Aguedo H. Areniego</li>
+                        <li><strong>SDRRM Facilitator (SHS):</strong> John Paul B. Aparato</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Help Modal Overlay -->
+    <div id="help-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Evacuation Pathfinder Guide</h3>
+                <button class="btn-close" onclick="toggleHelpModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <h4>Understanding the Room-Level Evacuation Pathfinder:</h4>
+                <ol>
+                    <li><strong>105 Individual Classroom Vertices</strong>: The graph now fully maps all classrooms (e.g. Room 304, Room 112) in EHS.</li>
+                    <li><strong>Whole-Building Multi-Floor Layout</strong>: See all floors of the selected building stacked vertically with hallways and stairwells.</li>
+                    <li><strong>Interactive Control Stepper</strong>: Manual controls with default 0.1-second autoplay speed.</li>
+                    <li><strong>Reset Configuration Button</strong>: Instantly reverts simulator back to clear weather settings.</li>
+                    <li><strong>Active Hazard Presets & blockages</strong>: Modify routes dynamically by triggering earthquake structures and fire blockages.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <p>&copy; 2026 Eusebio High School Disaster Risk Reduction Management Office (SDRRMO)</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
